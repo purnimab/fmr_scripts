@@ -36,14 +36,20 @@ def LorentzianDerivativeNWrapper(x, *args):
 def guesses(H, dPdH):
     peakmax = np.argmax(dPdH)
     peakmin = np.argmin(dPdH)
-    guessmag = (np.max(dPdH)-np.min(dPdH))/2.
+    guessmag = 400.*(np.max(dPdH)-np.min(dPdH))
     guessres = (H[peakmax]+H[peakmin])/2.
     guesswidth = np.abs(H[peakmax]-H[peakmin])/2.
     return guessmag, guessres, guesswidth
 
-def guessN(H,dPdH,N):
+def guessN(H,dPdH,N,width=1,pos='Center'):
     guessmag, guessres, guesswidth = guesses(H,dPdH)
-    guessHres = np.linspace(guessres-(N-1)/2.*guesswidth,guessres+(N-1)/2.*guesswidth,N)
+    spacing = width*guesswidth
+    if pos=='Left':
+    	guessHres = np.linspace(guessres,guessres+(N-1)*spacing,N)
+    elif pos=='Right':
+    	guessHres = np.linspace(guessres-(N-1)*spacing,guessres,N)
+    else: #pos='Center'
+    	guessHres = np.linspace(guessres-(N-1)/2.*spacing,guessres+(N-1)/2.*spacing,N)
     guessN = np.concatenate(tuple(np.array([guessmag,h,0,guesswidth]) for h in guessHres))
     return guessN
     
@@ -85,7 +91,7 @@ def subtractBG(H, dPdH, window=6, BGfunc=linearBG):
     
     return fitBG
 
-def fitFMR(H, dPdHoffset, guess):
+def fitFMR(H, dPdHoffset, guess, debug=False):
     fit = curve_fit(lambda x,*guess: LorentzianDerivativeNWrapper(x,guess), H, dPdHoffset, guess)
     fitY = LorentzianDerivativeNWrapper(H, fit[0])
     fitsep = np.array(fit[0])
@@ -97,7 +103,11 @@ def fitFMR(H, dPdHoffset, guess):
     fitsepY = [LorentzianDerivative(H, *(f)) for f in fitsep]
     
     plt.plot(H,dPdHoffset,'.')
+    if debug:
+    	plt.plot(H,LorentzianDerivativeNWrapper(H, guess))
     plt.plot(H,fitY)
+    residual = dPdHoffset-fitY
+    plt.plot(H,residual+(np.min(fitY)-np.max(residual))*1.5,'.-k')
     for f in fitsepY:
         plt.plot(H,f)
     plt.ylabel('Derivative of Absorbed Power (a.u.)')
