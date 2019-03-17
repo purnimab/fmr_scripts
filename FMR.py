@@ -52,6 +52,33 @@ def guessN(H,dPdH,N,width=1,pos='Center'):
     	guessHres = np.linspace(guessres-(N-1)/2.*spacing,guessres+(N-1)/2.*spacing,N)
     guessN = np.concatenate(tuple(np.array([guessmag,h,0,guesswidth]) for h in guessHres))
     return guessN
+
+def guessNWidths(H,dPdH,N,width=1,pos='Center'): #not sure if this does what it's supposed to
+    guessmag, guessres, guesswidth = guesses(H,dPdH)
+    spacing = width*guesswidth
+    if pos=='Left':
+    	guessHres = np.linspace(guessres,guessres+(N-1)*spacing,N)
+    	guesswidths = np.linspace(guesswidth, N*guesswidth, N)
+    elif pos=='Right':
+    	guessHres = np.linspace(guessres-(N-1)*spacing,guessres,N)
+    	guesswidths = np.linspace(guesswidth, N*guesswidth, N)
+    else: #pos='Center'
+    	guessHres = np.array([guessres]*N)
+    	guesswidths = np.linspace(guesswidth, N*guesswidth, N)
+    guessNw = np.concatenate(tuple(np.array([guessmag,h,0,guesswidths[i]]) for i,h in enumerate(guessHres)))
+    return guessNw
+
+def guessNplus1(oldguess,width=1,pos='Right'): #TODO: WRITE THIS
+    guessmag, guessres, guesswidth = guesses(H,dPdH)
+    spacing = width*guesswidth
+    if pos=='Left':
+    	guessHres = np.linspace(guessres,guessres+(N-1)*spacing,N)
+    elif pos=='Right':
+    	guessHres = np.linspace(guessres-(N-1)*spacing,guessres,N)
+    else: #pos='Center'
+    	guessHres = np.linspace(guessres-(N-1)/2.*spacing,guessres+(N-1)/2.*spacing,N)
+    guessNplus1 = np.concatenate(tuple(np.array([guessmag,h,0,guesswidth]) for h in guessHres))
+    return guessN
     
 def linearBG(x, m, b):
     return m*x+b
@@ -91,7 +118,7 @@ def subtractBG(H, dPdH, window=6, BGfunc=linearBG):
     
     return fitBG
 
-def fitFMR(H, dPdHoffset, guess, debug=False):
+def fitFMR(H, dPdHoffset, guess, debug=False, guessplt=1):
     fit = curve_fit(lambda x,*guess: LorentzianDerivativeNWrapper(x,guess), H, dPdHoffset, guess)
     fitY = LorentzianDerivativeNWrapper(H, fit[0])
     fitsep = np.array(fit[0])
@@ -104,8 +131,8 @@ def fitFMR(H, dPdHoffset, guess, debug=False):
     
     plt.plot(H,dPdHoffset,'.')
     if debug:
-    	plt.plot(H,LorentzianDerivativeNWrapper(H, guess))
-    plt.plot(H,fitY)
+    	plt.plot(H,LorentzianDerivativeNWrapper(H, guess)*guessplt)
+    plt.plot(H,fitY,linewidth=3.0)
     residual = dPdHoffset-fitY
     plt.plot(H,residual+(np.min(fitY)-np.max(residual))*1.5,'.-k')
     for f in fitsepY:
