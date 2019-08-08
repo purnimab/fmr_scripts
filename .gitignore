@@ -49,6 +49,3 @@ Temporary Items
 #Ipython Notebook
 .ipynb_checkpoints
 *.pyc
-
-#Data files
-*.csv
