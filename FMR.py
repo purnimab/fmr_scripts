@@ -118,15 +118,30 @@ def subtractBG(H, dPdH, window=6, BGfunc=linearBG):
     
     return fitBG
 
-def fitFMR(H, dPdHoffset, guess, debug=False, guessplt=1):
-    fit = curve_fit(lambda x,*guess: LorentzianDerivativeNWrapper(x,guess), H, dPdHoffset, guess)
-    fitY = LorentzianDerivativeNWrapper(H, fit[0])
-    fitsep = np.array(fit[0])
+def fitFMR(H, dPdHoffset, guess, debug=False, guessplt=1, fixedphase=False):
+    if fixedphase:
+        fixargs = np.append(np.delete(np.arange(0,len(guess)),slice(2,None,4)),2)
+        guessfix = guess[fixargs]
+        fit = curve_fit(lambda x,*guessfix: LorentzianDerivativeNWrapper(x, np.insert(guessfix[:-1],slice(2,None,3),guessfix[-1])), H, dPdHoffset, guessfix)
+        fitarg = np.insert(fit[0][:-1],slice(2,None,3),fit[0][-1])
+    else:
+        fit = curve_fit(lambda x,*guess: LorentzianDerivativeNWrapper(x,guess), H, dPdHoffset, guess)
+        fitarg = fit[0]
+    fitY = LorentzianDerivativeNWrapper(H, fitarg)
+    fitsep = np.array(fitarg)
     fitsep.shape = (fitsep.shape[0]/4,4)
-    varsep = np.array([c[i] for i,c in enumerate(fit[1])])
+
+    fitvar = np.array([c[i] for i,c in enumerate(fit[1])])
+    if fixedphase:
+        varsep = np.insert(fitvar[:-1],slice(2,None,3),fitvar[-1])
+    else:
+        varsep = fitvar
     varsep.shape = (varsep.shape[0]/4,4)
+
     #covsep = np.array(fit[1])
     #covsep.shape = (covsep.shape[0]/4,4)
+    #TODO: fix for fixed specific variables
+
     fitsepY = [LorentzianDerivative(H, *(f)) for f in fitsep]
     
     plt.plot(H,dPdHoffset,'.')
