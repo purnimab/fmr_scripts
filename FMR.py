@@ -156,7 +156,7 @@ def ewmafilter_4(data, alpha, scaling_factors=None, dtype=None, out=None): #4 fi
 
 def LorentzianNLockInWrapper(x, *args):
     tau = .03 #s - lock-in time constant for filtering
-    duration = .2 #s 'time per step' in labview
+    duration = .1 #s 'time between measurement' in labview - may also need to record this in data file??
     sampling = 256000. #Hz
     window = 128
     freq = 700. #Hz
@@ -164,12 +164,9 @@ def LorentzianNLockInWrapper(x, *args):
     dB = 24.
 
     time = np.linspace(0.,duration, num=int(duration*sampling)+1) #256 kHz sampling, 30ms time constant TODO: read in from file
-    #freqs = fftfreq(n=len(time),d=1./sampling)
-    #transfer = 1./np.power(1.j*np.abs(freqs)+freq, dB/6.)
 
     ref = np.sin(time*2*np.pi*700.+phase) #700 Hz reference signal
     #refo = np.cos(time*2*np.pi*700.+phase)
-    sig = np.empty_like(x)
 
     alpha = 1./(1.+tau*sampling)#filter
     s = np.power(1. - np.array(alpha), np.arange(time.size + 1))
@@ -178,29 +175,19 @@ def LorentzianNLockInWrapper(x, *args):
     hac = rms*np.sqrt(2)*ref
     peakparams = args[0][:-1]
 
+    sig = np.empty_like(x)
+
     for i,h in enumerate(x):
         field = h + hac
         signal = LorentzianNWrapper(field,peakparams)
 
         lix = signal*ref
         #liy = signal*refo
-        filtered = ewmafilter_4(lix,alpha,scaling_factors=s)
-        sig[i] = np.mean(filtered[-window:])
+        filteredx = ewmafilter_4(lix,alpha,scaling_factors=s)
+        #filteredy = ewmafilter_4(liy,alpha,scaling_factors=s)
+        sig[i] = np.mean(filteredx[-window:])
+        #theta[i] = np.arctan2(np.mean(np.mean(filteredy[-window:])),sig[i])*180./np.pi
 
-        #xfilt = np.zeros_like(lix)
-        #yfilt = np.zeros_like(liy)
-
-        #TODO: fix to be actual filtering process
-
-        #xfilt[0] = alpha*lix[0]
-        #yfilt[0] = alpha*liy[0]
-        #for j in np.arange(1,len(lix)):
-        #    xfilt[j] = alpha*lix[j] + (1.-alpha)*xfilt[j-1]
-        #    yfilt[j] = alpha*liy[j] + (1.-alpha)*yfilt[j-1]
-        #li = signal*ref
-        #sig[i] = trapz(li)/trapz(ref**2) #TODO: fix to be an actual filtering process - also in case this isn't an integer number of cycles...
-        
-        #sig[i] = np.mean(xfilt[-int((duration-tau)*sampling):])
     return sig
 
 def LorentzianDerivativeBroadenedNWrapper(x, *args):
