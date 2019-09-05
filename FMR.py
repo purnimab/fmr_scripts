@@ -1,6 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+from scipy.signal import convolve
+from scipy.integrate import trapz
+#from scipy.fftpack import fft, ifft, fftfreq
 
 #TODO: figure out how to do background subtraction not just with H>0
 
@@ -17,14 +20,43 @@ def readFileTruncatePos(filename):
         phase = phase[:zero[0]]
     return H, dPdH, phase
 
+def Lorentzian(x, a, x0, theta, b):
+    denom = b**2 + (x-x0)**2
+    sym = b
+    asym = x-x0
+    return a/denom*(sym*np.cos(theta)+asym*np.sin(theta))
+
 def LorentzianDerivative(x, a, x0, theta, b):
     denom = (b**2 + (x-x0)**2)**2
     sym = -2*(x-x0)*b
     asym = (b**2-(x-x0)**2)
     return a/denom*(sym*np.cos(theta)+asym*np.sin(theta))
 
+def ExponentiallyBroaden(lor,tau):
+    #exponential = np.exp(-np.arange(0,len(lor))/tau)
+    exponential = np.exp(-np.linspace(0.,50*100.,num=51)/tau)
+    l = len(exponential)
+    #convolution = convolve(lor,exponential,mode='same')
+    convolution = np.array([np.sum(lor[i:i+l]*exponential[::-1]) for i,s in enumerate(lor[l-1:])])/np.sum(exponential)
+    convpart = np.array([np.sum(lor[:i+1]*exponential[:i+1][::-1])/np.sum(exponential[:i+1]) for i,s in enumerate(lor[:l-1])])
+    return np.append(convpart,convolution)
+
+def LorentzianN(x, a, x0, theta, b):
+    return np.sum([Lorentzian(x,a[i],x0[i],theta[i],b[i]) for i,x0i in enumerate(x0)],axis=0)
+
 def LorentzianDerivativeN(x, a, x0, theta, b):
     return np.sum([LorentzianDerivative(x,a[i],x0[i],theta[i],b[i]) for i,x0i in enumerate(x0)],axis=0)
+
+def LorentzianDerivativeBroadenedN(x, a, x0, theta, b, tau):
+    lor = np.sum([LorentzianDerivative(x,a[i],x0[i],theta[i],b[i]) for i,x0i in enumerate(x0)],axis=0)
+    return ExponentiallyBroaden(lor,tau)
+
+def LorentzianNWrapper(x, *args):
+    a = args[0][::4]
+    x0 = args[0][1::4]
+    theta = args[0][2::4]
+    b = args[0][3::4]
+    return LorentzianN(x,a,x0,theta,b)
 
 def LorentzianDerivativeNWrapper(x, *args):
     a = args[0][::4]
@@ -32,6 +64,152 @@ def LorentzianDerivativeNWrapper(x, *args):
     theta = args[0][2::4]
     b = args[0][3::4]
     return LorentzianDerivativeN(x,a,x0,theta,b)
+
+def LorentzianNLockInWrapperQuick(x, *args):
+    tau = .03 #s - lock-in time constant for filtering
+    duration = .0025 #s time to go through an integer number of samples to get all possible field points
+    sampling = 256000. #Hz
+    freq = 700. #Hz
+    phase = 0.
+
+    time = np.linspace(0.,duration, num=int(duration*sampling)+1) #256 kHz sampling
+    ref = np.sin(time*2*np.pi*700.+phase) #700 Hz reference signal
+    refmag = np.trapz(ref**2)
+    sig = np.zeros_like(x)
+
+    rms = args[0][-1]
+    hac = rms*np.sqrt(2)*ref
+
+    peakparams = args[0][:-1]
+
+    for i,h in enumerate(x):
+        field = h + hac
+        signal = LorentzianNWrapper(field,peakparams)
+
+        lix = signal*ref
+        sig[i] = np.trapz(lix)/refmag
+    return sig
+
+#adapted from https://stackoverflow.com/a/52998713, answer by Jake Walden
+def ewmafilter_4(data, alpha, scaling_factors=None, dtype=None, out=None): #4 filters corresponding to 24 dB/oct. dropoff
+    
+    #if dtype is None:
+    #    if data.dtype == np.float32:
+    #        dtype = np.float32
+    #    else:
+    dtype = np.float64
+    #else:
+    #    dtype = np.dtype(dtype)
+    
+    interm = np.empty_like(data, dtype=dtype)
+    if out is None:
+        out = np.empty_like(data, dtype=dtype)
+    else:
+        assert out.shape == data.shape
+        assert out.dtype == dtype
+
+    if scaling_factors is None: #may be pre-computed - then takes precedence over alpha
+        alpha = np.array(alpha, copy=False).astype(dtype, copy=False)
+        scaling_factors = np.power(1. - alpha, np.arange(data.size + 1, dtype=dtype), dtype=dtype)
+    
+    #loop 1 - stores into interm
+    offset = data[0]
+    np.multiply(data, (alpha * scaling_factors[-2]) / scaling_factors[:-1],
+                dtype=dtype, out=interm)
+    np.cumsum(interm, dtype=dtype, out=interm)
+    interm /= scaling_factors[-2::-1]
+    if offset != 0:
+        offset = np.array(offset, copy=False).astype(dtype, copy=False)
+        interm += offset * scaling_factors[1:]
+    
+    #loop 2 - stores into out
+    offset = interm[0]
+    np.multiply(interm, (alpha * scaling_factors[-2]) / scaling_factors[:-1],
+                dtype=dtype, out=out)
+    np.cumsum(out, dtype=dtype, out=out)
+    out /= scaling_factors[-2::-1]
+    if offset != 0:
+        offset = np.array(offset, copy=False).astype(dtype, copy=False)
+        out += offset * scaling_factors[1:]
+
+    #loop 3 - stores into interm (to save memory)
+    offset = out[0]
+    np.multiply(out, (alpha * scaling_factors[-2]) / scaling_factors[:-1],
+                dtype=dtype, out=interm)
+    np.cumsum(interm, dtype=dtype, out=interm)
+    interm /= scaling_factors[-2::-1]
+    if offset != 0:
+        offset = np.array(offset, copy=False).astype(dtype, copy=False)
+        interm += offset * scaling_factors[1:]
+    
+    #loop 4 - stores into out (to save memory) - final loop
+    offset = interm[0]
+    np.multiply(interm, (alpha * scaling_factors[-2]) / scaling_factors[:-1],
+                dtype=dtype, out=out)
+    np.cumsum(out, dtype=dtype, out=out)
+    out /= scaling_factors[-2::-1]
+    if offset != 0:
+        offset = np.array(offset, copy=False).astype(dtype, copy=False)
+        out += offset * scaling_factors[1:]
+
+    return out
+
+def LorentzianNLockInWrapper(x, *args):
+    tau = .03 #s - lock-in time constant for filtering
+    duration = .2 #s 'time per step' in labview
+    sampling = 256000. #Hz
+    window = 128
+    freq = 700. #Hz
+    phase = 0.
+    dB = 24.
+
+    time = np.linspace(0.,duration, num=int(duration*sampling)+1) #256 kHz sampling, 30ms time constant TODO: read in from file
+    #freqs = fftfreq(n=len(time),d=1./sampling)
+    #transfer = 1./np.power(1.j*np.abs(freqs)+freq, dB/6.)
+
+    ref = np.sin(time*2*np.pi*700.+phase) #700 Hz reference signal
+    #refo = np.cos(time*2*np.pi*700.+phase)
+    sig = np.empty_like(x)
+
+    alpha = 1./(1.+tau*sampling)#filter
+    s = np.power(1. - np.array(alpha), np.arange(time.size + 1))
+
+    rms = args[0][-1]
+    hac = rms*np.sqrt(2)*ref
+    peakparams = args[0][:-1]
+
+    for i,h in enumerate(x):
+        field = h + hac
+        signal = LorentzianNWrapper(field,peakparams)
+
+        lix = signal*ref
+        #liy = signal*refo
+        filtered = ewmafilter_4(lix,alpha,scaling_factors=s)
+        sig[i] = np.mean(filtered[-window:])
+
+        #xfilt = np.zeros_like(lix)
+        #yfilt = np.zeros_like(liy)
+
+        #TODO: fix to be actual filtering process
+
+        #xfilt[0] = alpha*lix[0]
+        #yfilt[0] = alpha*liy[0]
+        #for j in np.arange(1,len(lix)):
+        #    xfilt[j] = alpha*lix[j] + (1.-alpha)*xfilt[j-1]
+        #    yfilt[j] = alpha*liy[j] + (1.-alpha)*yfilt[j-1]
+        #li = signal*ref
+        #sig[i] = trapz(li)/trapz(ref**2) #TODO: fix to be an actual filtering process - also in case this isn't an integer number of cycles...
+        
+        #sig[i] = np.mean(xfilt[-int((duration-tau)*sampling):])
+    return sig
+
+def LorentzianDerivativeBroadenedNWrapper(x, *args):
+    a = args[0][:-1:4]
+    x0 = args[0][1:-1:4]
+    theta = args[0][2:-1:4]
+    b = args[0][3:-1:4]
+    tau = args[0][-1]
+    return LorentzianDerivativeBroadenedN(x,a,x0,theta,b,tau)
 
 def guesses(H, dPdH):
     peakmax = np.argmax(dPdH)
@@ -118,13 +296,23 @@ def subtractBG(H, dPdH, window=6, BGfunc=linearBG):
     
     return fitBG
 
-def fitFMR(H, dPdHoffset, guess, debug=False, guessplt=1, fixedphase=False):
+def fitFMR(H, dPdHoffset, guess, debug=False, guessplt=1, fixedphase=False, posdef=False):
     if fixedphase:
         fixargs = np.append(np.delete(np.arange(0,len(guess)),slice(2,None,4)),2)
         guessfix = guess[fixargs]
-        fit = curve_fit(lambda x,*guessfix: LorentzianDerivativeNWrapper(x, np.insert(guessfix[:-1],slice(2,None,3),guessfix[-1])), H, dPdHoffset, guessfix)
+        upper = [np.inf]*len(guessfix)
+        lower = [-np.inf]*len(guessfix)
+        if posdef:
+            lower[:-1:3] = [0.]*(len(guessfix)/3) #peak magnitude must be positive
+        fit = curve_fit(lambda x,*guessfix: LorentzianDerivativeNWrapper(x, np.insert(guessfix[:-1],slice(2,None,3),guessfix[-1])), H, dPdHoffset, guessfix, bounds = (lower, upper))
         fitarg = np.insert(fit[0][:-1],slice(2,None,3),fit[0][-1])
     else:
+        upper = [np.inf]*len(guess)
+        lower = [-np.inf]*len(guess)
+        if posdef:
+            lower[::4] = [0.]*(len(guess)/4) #peak magnitude must be positive
+            lower[2::4] = [0.]*(len(guess)/4) #peak phase must be between 0 and pi radians
+            upper[2::4] = [np.pi]*(len(guess)/4) #TODO: fix peak output to say phase is in radians, not degrees
         fit = curve_fit(lambda x,*guess: LorentzianDerivativeNWrapper(x,guess), H, dPdHoffset, guess)
         fitarg = fit[0]
     fitY = LorentzianDerivativeNWrapper(H, fitarg)
