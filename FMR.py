@@ -91,7 +91,7 @@ def LorentzianNLockInWrapperQuick(x, *args):
     return sig
 
 #adapted from https://stackoverflow.com/a/52998713, answer by Jake Walden
-def ewmafilter_4(data, alpha, scaling_factors=None, dtype=None, out=None): #4 filters corresponding to 24 dB/oct. dropoff
+def ewmafilter_4(data, alpha, scaling_factors=None, dtype=None, out=None, fast=True, window=128): #4 filters corresponding to 24 dB/oct. dropoff
     
     #if dtype is None:
     #    if data.dtype == np.float32:
@@ -147,12 +147,26 @@ def ewmafilter_4(data, alpha, scaling_factors=None, dtype=None, out=None): #4 fi
     np.multiply(interm, (alpha * scaling_factors[-2]) / scaling_factors[:-1],
                 dtype=dtype, out=out)
     np.cumsum(out, dtype=dtype, out=out)
+
+    #TODO: can cut down on computation time by only computing the 'window'th last elements of the last ewma
+
     out /= scaling_factors[-2::-1]
     if offset != 0:
         offset = np.array(offset, copy=False).astype(dtype, copy=False)
         out += offset * scaling_factors[1:]
 
     return out
+
+def LockIn(h, hac, peakparams, ref, alpha, window, scaling_factors=None):
+    field = h + hac
+    signal = LorentzianNWrapper(field, peakparams)
+
+    lix = signal*ref
+    #liy = signal*refo
+    filteredx = ewmafilter_4(lix,alpha,scaling_factors=scaling_factors)
+    #filteredy = ewmafilter_4(liy,alpha,scaling_factors=scaling_factors)
+    #theta[i] = np.arctan2(np.mean(np.mean(filteredy[-window:])),sig[i])*180./np.pi
+    return np.mean(filteredx[-window:])
 
 def LorentzianNLockInWrapper(x, *args):
     tau = .03 #s - lock-in time constant for filtering
@@ -175,20 +189,9 @@ def LorentzianNLockInWrapper(x, *args):
     hac = rms*np.sqrt(2)*ref
     peakparams = args[0][:-1]
 
-    sig = np.empty_like(x)
+    sig = [LockIn(h, hac, peakparams, ref, alpha, window, scaling_factors=s) for h in x]
 
-    for i,h in enumerate(x):
-        field = h + hac
-        signal = LorentzianNWrapper(field,peakparams)
-
-        lix = signal*ref
-        #liy = signal*refo
-        filteredx = ewmafilter_4(lix,alpha,scaling_factors=s)
-        #filteredy = ewmafilter_4(liy,alpha,scaling_factors=s)
-        sig[i] = np.mean(filteredx[-window:])
-        #theta[i] = np.arctan2(np.mean(np.mean(filteredy[-window:])),sig[i])*180./np.pi
-
-    return sig
+    return np.array(sig)
 
 def LorentzianDerivativeBroadenedNWrapper(x, *args):
     a = args[0][:-1:4]
