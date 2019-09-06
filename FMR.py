@@ -65,7 +65,7 @@ def LorentzianDerivativeNWrapper(x, *args):
     b = args[0][3::4]
     return LorentzianDerivativeN(x,a,x0,theta,b)
 
-def LorentzianNLockInWrapperQuick(x, *args):
+def LorentzianNLockInWrapperQuick(x, method=0, *args):
     tau = .03 #s - lock-in time constant for filtering
     duration = .0025 #s time to go through an integer number of samples to get all possible field points
     sampling = 256000. #Hz
@@ -87,7 +87,10 @@ def LorentzianNLockInWrapperQuick(x, *args):
         signal = LorentzianNWrapper(field,peakparams)
 
         lix = signal*ref
-        sig[i] = np.trapz(lix)/refmag
+        if method == 0:
+            sig[i] = np.trapz(lix)/refmag
+        else:
+            sig[i] = np.mean(lix)/refmag
     return sig
 
 #adapted from https://stackoverflow.com/a/52998713, answer by Jake Walden
@@ -286,16 +289,38 @@ def subtractBG(H, dPdH, window=6, BGfunc=linearBG):
     
     return fitBG
 
-def fitFMR(H, dPdHoffset, guess, debug=False, guessplt=1, fixedphase=False, posdef=False):
+def insertphase(a): #takes [1,2,4,1,2,4,3] -> [1,2,3,4,1,2,3,4]
+    return np.insert(a[:-1],slice(2,None,3),a[-1])
+
+def insertmodfield(a): #takes [1,2,3,4,1,2,3,4,5] -> [1,2,3,4,5,1,2,3,4,5]
+    return np.insert(a,slice(4,-1,4),a[-1])
+
+def fitFMR(H, dPdHoffset, guess, debug=False, guessplt=1, fixedphase=False, posdef=False, lockin=False, rmsguess=3.):
     if fixedphase:
-        fixargs = np.append(np.delete(np.arange(0,len(guess)),slice(2,None,4)),2)
-        guessfix = guess[fixargs]
+        guessfix = np.append(np.delete(guess,slice(2,None,4)),guess[2]) #takes [1,2,3,4,1,2,3,4] -> [1,2,4,1,2,4,3]
+        #fixargs = np.append(np.delete(np.arange(0,len(guess)),slice(2,None,4)),2)
+        #guessfix = guess[fixargs]
         upper = [np.inf]*len(guessfix)
         lower = [-np.inf]*len(guessfix)
         if posdef:
             lower[:-1:3] = [0.]*(len(guessfix)/3) #peak magnitude must be positive
-        fit = curve_fit(lambda x,*guessfix: LorentzianDerivativeNWrapper(x, np.insert(guessfix[:-1],slice(2,None,3),guessfix[-1])), H, dPdHoffset, guessfix, bounds = (lower, upper))
-        fitarg = np.insert(fit[0][:-1],slice(2,None,3),fit[0][-1])
+        if lockin:
+            prelimfit = curve_fit(lambda x,*guessfix: LorentzianDerivativeNWrapper(x,insertphase(guessfix)), H, dPdHoffset, guessfix, bounds = (lower, upper)) #first fit with derivative function
+            lower = lower+[0]
+            upper = upper+[np.inf]
+            quickfit = curve_fit(lambda x,*guess: LorentzianNLockInWrapperQuick(x,0,np.append(insertphase(guess[:-1]),guess[-1])), H, dPdHoffset, np.append(prelimfit[0],rmsguess), bounds = (lower, upper))
+            guessli = np.copy(quickfit[0])
+            #peak position and linewidth start as geometric mean
+            posslice = slice(1,-2,3)
+            guessli[posslice] = np.sqrt(quickfit[0][posslice]*prelimfit[0][posslice])
+            widthslice = slice(2,-2,3)
+            guessli[widthslice] = np.sqrt(quickfit[0][widthslice]*prelimfit[0][widthslice])
+            fit = curve_fit(lambda x,*guess: LorentzianNLockInWrapper(x,np.append(insertphase(guess[:-1]),guess[-1])), H, dPdHoffset, guessli, bounds = (lower, upper))
+            fitarg = np.append(insertphase(fit[0][:-1]),fit[0][-1]) #[1,2,4,1,2,4,3,5] -> [1,2,3,4,1,2,3,4,5]
+        else:
+            fit = curve_fit(lambda x,*guessfix: LorentzianDerivativeNWrapper(x, insertphase(guessfix)), H, dPdHoffset, guessfix, bounds = (lower, upper))
+            fitarg = insertphase(fit[0])
+
     else:
         upper = [np.inf]*len(guess)
         lower = [-np.inf]*len(guess)
@@ -303,33 +328,64 @@ def fitFMR(H, dPdHoffset, guess, debug=False, guessplt=1, fixedphase=False, posd
             lower[::4] = [0.]*(len(guess)/4) #peak magnitude must be positive
             lower[2::4] = [0.]*(len(guess)/4) #peak phase must be between 0 and pi radians
             upper[2::4] = [np.pi]*(len(guess)/4) #TODO: fix peak output to say phase is in radians, not degrees
-        fit = curve_fit(lambda x,*guess: LorentzianDerivativeNWrapper(x,guess), H, dPdHoffset, guess)
+
+        if lockin:
+            prelimfit = curve_fit(lambda x,*guess: LorentzianDerivativeNWrapper(x,guess), H, dPdHoffset, guess, bounds = (lower, upper)) #first fit with derivative function
+            lower = lower+[0]
+            upper = upper+[np.inf]
+            quickfit = curve_fit(lambda x,*guess: LorentzianNLockInWrapperQuick(x,0,guess), H, dPdHoffset, np.append(prelimfit[0],rmsguess), bounds = (lower, upper))
+            guessli = np.copy(quickfit[0])
+            guessli[1:-1:2] = np.sqrt(quickfit[0][1:-1:2]*prelimfit[0][1::2]) #peak position and linewidth start as geometric mean
+            fit = curve_fit(lambda x,*guess: LorentzianNLockInWrapper(x,guess), H, dPdHoffset, guessli, bounds = (lower, upper))
+        else:
+            fit = curve_fit(lambda x,*guess: LorentzianDerivativeNWrapper(x,guess), H, dPdHoffset, guess, bounds = (lower, upper))
+        
         fitarg = fit[0]
-    fitY = LorentzianDerivativeNWrapper(H, fitarg)
-    fitsep = np.array(fitarg)
-    fitsep.shape = (fitsep.shape[0]/4,4)
+
+    if lockin:
+        fitY = LorentzianNLockInWrapper(H, fitarg)
+    else:
+        fitY = LorentzianDerivativeNWrapper(H, fitarg)
+
+    if lockin:
+        fitsep = np.array(insertmodfield(fitarg))
+    else:
+        fitsep = np.array(fitarg)
+    nvars = 5 if lockin else 4
+    fitsep.shape = (fitsep.shape[0]/nvars,nvars)
 
     fitvar = np.array([c[i] for i,c in enumerate(fit[1])])
     if fixedphase:
-        varsep = np.insert(fitvar[:-1],slice(2,None,3),fitvar[-1])
+        if lockin:
+            varsep = np.insert(np.append(np.insert(fitvar[:-2],slice(2,None,3),fitvar[-2]),fitvar[-1]),slice(4,-1,4),fitvar[-1])
+        else:
+            varsep = np.insert(fitvar[:-1],slice(2,None,3),fitvar[-1])
     else:
-        varsep = fitvar
-    varsep.shape = (varsep.shape[0]/4,4)
+        if lockin:
+            varsep = np.insert(fitvar,slice(4,-1,4),fitvar[-1])
+        else:
+            varsep = fitvar
+    varsep.shape = (varsep.shape[0]/nvars,nvars)
 
     #covsep = np.array(fit[1])
     #covsep.shape = (covsep.shape[0]/4,4)
     #TODO: fix for fixed specific variables
 
-    fitsepY = [LorentzianDerivative(H, *(f)) for f in fitsep]
+    if lockin:
+        fitsepY = [LorentzianNLockInWrapper(H, f) for f in fitsep]
+    else:
+        fitsepY = [LorentzianDerivative(H, *(f)) for f in fitsep]
     
-    plt.plot(H,dPdHoffset,'.')
+    plt.plot(H,dPdHoffset,'.',label='data')
     if debug:
-    	plt.plot(H,LorentzianDerivativeNWrapper(H, guess)*guessplt)
-    plt.plot(H,fitY,linewidth=3.0)
+    	plt.plot(H,LorentzianDerivativeNWrapper(H, guess)*guessplt,label='initial guess')
+        if lockin:
+            plt.plot(H,LorentzianNLockInWrapper(H, guessli),label='intermediate guess')
+    plt.plot(H,fitY,linewidth=3.0,label='final fit')
     residual = dPdHoffset-fitY
     plt.plot(H,residual+(np.min(fitY)-np.max(residual))*1.5,'.-k')
     for f in fitsepY:
-        plt.plot(H,f)
+        plt.plot(H,f,label='fit '+str(i))
     plt.ylabel('Derivative of Absorbed Power (a.u.)')
     plt.xlabel('External Field (Oe)')
         
