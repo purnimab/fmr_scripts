@@ -1,9 +1,12 @@
+from __future__ import division
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from scipy.signal import convolve
+#from scipy.signal import convolve
 from scipy.integrate import trapz
 #from scipy.fftpack import fft, ifft, fftfreq
+#import multiprocessing as mp
+#from functools import partial
 
 #TODO: figure out how to do background subtraction not just with H>0
 
@@ -65,16 +68,37 @@ def LorentzianDerivativeNWrapper(x, *args):
     b = args[0][3::4]
     return LorentzianDerivativeN(x,a,x0,theta,b)
 
-def LorentzianNLockInWrapperQuick(x, method=0, *args):
-    tau = .03 #s - lock-in time constant for filtering
-    duration = .0025 #s time to go through an integer number of samples to get all possible field points
-    sampling = 256000. #Hz
-    freq = 700. #Hz
-    phase = 0.
+#defining global lock-in variables
+tau = .03 #s - lock-in time constant for filtering
+sampling = 256000. #Hz
+window = 128
+reffreq = 700. #Hz
+time = None
+ref = None
+phase = 0.
+alpha = 1./(1.+tau*sampling)#filter
+scaling_factors = None
+quickLockIn = None
 
+def initLockIn(quick = False):
+    global time, ref, scaling_factors, quickLockIn
+    if quick:
+        duration = .0025 #s time to go through an integer number of samples to get all possible field points
+        quickLockIn = True
+    else:
+        duration = .1 #s 'time between measurement' in labview - may also need to record this in data file??
+        quickLockIn = False
     time = np.linspace(0.,duration, num=int(duration*sampling)+1) #256 kHz sampling
-    ref = np.sin(time*2*np.pi*700.+phase) #700 Hz reference signal
-    refmag = np.trapz(ref**2)
+    ref = np.sin(time*2*np.pi*reffreq+phase) #700 Hz reference signal
+    #refo = np.cos(time*2*np.pi*700.+phase)
+    if not quick:
+        scaling_factors = np.power(1. - np.array(alpha), np.arange(time.size + 1))
+
+def LorentzianNLockInWrapperQuick(x, method=0, *args):
+    if not quickLockIn or (ref is None):
+        initLockIn(quick = True)
+    
+    refmag = trapz(ref**2)
     sig = np.zeros_like(x)
 
     rms = args[0][-1]
@@ -87,14 +111,16 @@ def LorentzianNLockInWrapperQuick(x, method=0, *args):
         signal = LorentzianNWrapper(field,peakparams)
 
         lix = signal*ref
-        if method == 0:
-            sig[i] = np.trapz(lix)/refmag
-        else:
+        if method == 0: #integral of signal*reference
+            sig[i] = trapz(lix)/refmag
+        else: #average value of signal*reference
             sig[i] = np.mean(lix)/refmag
     return sig
 
 #adapted from https://stackoverflow.com/a/52998713, answer by Jake Walden
-def ewmafilter_4(data, alpha, scaling_factors=None, dtype=None, out=None, fast=True, window=128): #4 filters corresponding to 24 dB/oct. dropoff
+def ewmafilter_4(data,# alpha, scaling_factors=None,
+                 dtype=None, out=None, fast=True#, window=128
+                 ): #4 filters corresponding to 24 dB/oct. dropoff
     
     #if dtype is None:
     #    if data.dtype == np.float32:
@@ -111,9 +137,9 @@ def ewmafilter_4(data, alpha, scaling_factors=None, dtype=None, out=None, fast=T
         assert out.shape == data.shape
         assert out.dtype == dtype
 
-    if scaling_factors is None: #may be pre-computed - then takes precedence over alpha
-        alpha = np.array(alpha, copy=False).astype(dtype, copy=False)
-        scaling_factors = np.power(1. - alpha, np.arange(data.size + 1, dtype=dtype), dtype=dtype)
+    #if scaling_factors is None: #may be pre-computed - then takes precedence over alpha
+    #    alpha = np.array(alpha, copy=False).astype(dtype, copy=False)
+    #    scaling_factors = np.power(1. - alpha, np.arange(data.size + 1, dtype=dtype), dtype=dtype)
     
     #loop 1 - stores into interm
     offset = data[0]
@@ -160,39 +186,32 @@ def ewmafilter_4(data, alpha, scaling_factors=None, dtype=None, out=None, fast=T
 
     return out
 
-def LockIn(h, hac, peakparams, ref, alpha, window, scaling_factors=None):
+def LockIn(h, hac, peakparams):#, ref, alpha, window, scaling_factors=None):
     field = h + hac
     signal = LorentzianNWrapper(field, peakparams)
 
     lix = signal*ref
     #liy = signal*refo
-    filteredx = ewmafilter_4(lix,alpha,scaling_factors=scaling_factors)
+    filteredx = ewmafilter_4(lix)#,alpha,scaling_factors=scaling_factors)
     #filteredy = ewmafilter_4(liy,alpha,scaling_factors=scaling_factors)
     #theta[i] = np.arctan2(np.mean(np.mean(filteredy[-window:])),sig[i])*180./np.pi
     return np.mean(filteredx[-window:])
 
 def LorentzianNLockInWrapper(x, *args):
-    tau = .03 #s - lock-in time constant for filtering
-    duration = .1 #s 'time between measurement' in labview - may also need to record this in data file??
-    sampling = 256000. #Hz
-    window = 128
-    freq = 700. #Hz
-    phase = 0.
-    dB = 24.
-
-    time = np.linspace(0.,duration, num=int(duration*sampling)+1) #256 kHz sampling, 30ms time constant TODO: read in from file
-
-    ref = np.sin(time*2*np.pi*700.+phase) #700 Hz reference signal
-    #refo = np.cos(time*2*np.pi*700.+phase)
-
-    alpha = 1./(1.+tau*sampling)#filter
-    s = np.power(1. - np.array(alpha), np.arange(time.size + 1))
+    if quickLockIn or (scaling_factors is None):
+        initLockIn()
 
     rms = args[0][-1]
     hac = rms*np.sqrt(2)*ref
     peakparams = args[0][:-1]
-
-    sig = [LockIn(h, hac, peakparams, ref, alpha, window, scaling_factors=s) for h in x]
+    
+#    p = mp.Pool(mp.cpu_count())
+#    sig = p.map(partial(LockIn, hac=hac, peakparams=peakparams), x)
+#    p.close()
+#    p.join()
+    
+    #sig = [LockIn(h, hac, peakparams, ref, alpha, window, scaling_factors=s) for h in x]
+    sig = [LockIn(h, hac, peakparams) for h in x]
 
     return np.array(sig)
 
