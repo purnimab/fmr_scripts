@@ -333,6 +333,57 @@ def insertphase(a): #takes [1,2,4,1,2,4,3] -> [1,2,3,4,1,2,3,4]
 def insertmodfield(a): #takes [1,2,3,4,1,2,3,4,5] -> [1,2,3,4,5,1,2,3,4,5]
     return np.insert(a,slice(4,-1,4),a[-1])
 
+def fitFMRLockInFixedModField(H, dPdHoffset, guess, debug=False, guessplt=1, separate=True): #guess includes modulation field
+    #first, do a 1-peak fit
+    plt.plot(H,dPdHoffset,'.',label='data')
+    
+    rms = guess[-1]
+    guessli = guess[:-1]
+    if debug:
+        print "Guess:"
+        print guessli
+        plt.plot(H,LorentzianNLockInWrapper(H, np.append(guessli,rms)),label='guess')
+        start = timer()
+    fit = curve_fit(lambda x,*guessli: LorentzianNLockInWrapper(x,np.append(guessli,rms)), H, dPdHoffset, guessli)#, method='trf', verbose=2)
+    if debug:
+        end = timer()
+        print str(end-start)+' seconds for fit'
+    fitarg = fit[0]
+    if debug:
+        print "Final fit:"
+        print fitarg
+
+    fitY = LorentzianNLockInWrapper(H, np.append(fitarg,rms))
+    
+    plt.plot(H,fitY,linewidth=3.0,label='final fit')
+    residual = dPdHoffset-fitY
+    plt.plot(H,residual+(np.min(fitY)-np.max(residual))*1.5,'.-k')
+
+
+    fitsep = np.array(fitarg)
+    fitsep.shape = (fitsep.shape[0]/4,4)
+
+    fitvar = np.array([c[i] for i,c in enumerate(fit[1])])
+    varsep = np.array(fitvar)
+    #varsep = np.insert(fitvar,slice(4,-1,4),fitvar[-1])
+    varsep.shape = (varsep.shape[0]/4,4)
+
+    #covsep = np.array(fit[1])
+    #covsep.shape = (covsep.shape[0]/4,4)
+    #TODO: fix for fixed specific variables
+
+    fitsepY = [LorentzianNLockInWrapper(H, np.append(f,rms)) for f in fitsep]
+
+    for i,f in enumerate(fitsepY):
+        plt.plot(H,f,label='fit '+str(i))
+    plt.ylabel('Derivative of Absorbed Power (a.u.)')
+    plt.xlabel('External Field (Oe)')
+
+    if separate:
+        return fitsep,varsep#,covsep
+    else:
+        return fit
+
 def fitFMRLockIn(H, dPdHoffset, guess, debug=False, guessplt=1, rmsguess=3., separate=True):
     #first, do a 1-peak fit
     firstguess = guessN(H,dPdHoffset,1,width=1,pos='Center')
@@ -351,7 +402,7 @@ def fitFMRLockIn(H, dPdHoffset, guess, debug=False, guessplt=1, rmsguess=3., sep
         plt.plot(H,LorentzianNLockInWrapperQuick(H,0,quickfit[0])*guessplt,label='quick fit')
     guessli = np.copy(quickfit[0])
     #guessli[7:-1:4] = guessli[3] #makes all the same width
-    guessli[6:-1:4] = np.pi/2. #makes the secondary peak completely out of phase (dispersive)
+    #guessli[6:-1:4] = np.pi/2. #makes the secondary peak completely out of phase (dispersive)
     quickY = LorentzianNLockInWrapperQuick(H,0,quickfit[0])
     maxpos = np.argmax(quickY)
     scaling = LorentzianNLockInWrapper([H[maxpos]],quickfit[0])[0]/quickY[maxpos]
