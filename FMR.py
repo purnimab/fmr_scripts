@@ -292,7 +292,13 @@ def guessNplus1(oldguess,width=1,pos='Right'): #TODO: WRITE THIS
 def linearBG(x, m, b):
     return m*x+b
 
-def subtractBG(H, dPdH, window=6, BGfunc=linearBG):
+def quadBG(x, a, b, c):
+    return a*x**2 + b*x + c
+
+def quartBG(x,a,b,c,d,e):
+    return a*x**4 + b*x**3 + c*x**2 + d*x + e
+
+def subtractBG(H, dPdH, window=6, BGfunc=linearBG, returnFit=False):
     #need to fix this to work with negative H
     guessmag, guessres, guesswidth = guesses(H,dPdH)
     bgH = []
@@ -315,9 +321,14 @@ def subtractBG(H, dPdH, window=6, BGfunc=linearBG):
         bgstart = -1
 
     if len(bg) > 1:
-        guess = np.array([0, 0])
+        if BGfunc == linearBG:
+            guess = np.array([0., 0.])
+        elif BGfunc == quadBG:
+            guess = np.array([0.,0.,0.])
+        elif BGfunc == quartBG:
+            guess = np.array([0.]*5)
         fit = curve_fit(BGfunc, bgH, bg, guess)
-        fitBG = linearBG(H, *(fit[0]))
+        fitBG = BGfunc(H, *(fit[0]))
         plt.plot(H,dPdH,'.')
         plt.plot(H,fitBG)
         plt.vlines(H[bgend],np.min(dPdH),np.max(dPdH),linestyles='dotted')
@@ -325,7 +336,10 @@ def subtractBG(H, dPdH, window=6, BGfunc=linearBG):
     else:
         fitBG = np.zeros_like(H)
 
-    return fitBG
+    if returnFit:
+        return fitBG, fit
+    else:
+        return fitBG
 
 def insertphase(a): #takes [1,2,4,1,2,4,3] -> [1,2,3,4,1,2,3,4]
     return np.insert(a[:-1],slice(2,None,3),a[-1])
@@ -336,13 +350,15 @@ def insertmodfield(a): #takes [1,2,3,4,1,2,3,4,5] -> [1,2,3,4,5,1,2,3,4,5]
 def fitFMRLockInFixedModField(H, dPdHoffset, guess, debug=False, guessplt=1, separate=True): #guess includes modulation field
     #first, do a 1-peak fit
     plt.plot(H,dPdHoffset,'.',label='data')
-    
+
     rms = guess[-1]
     guessli = guess[:-1]
     if debug:
         print "Guess:"
         print guessli
         plt.plot(H,LorentzianNLockInWrapper(H, np.append(guessli,rms)),label='guess')
+        plt.show()
+        plt.plot(H,dPdHoffset,'.',label='data')
         start = timer()
     fit = curve_fit(lambda x,*guessli: LorentzianNLockInWrapper(x,np.append(guessli,rms)), H, dPdHoffset, guessli)#, method='trf', verbose=2)
     if debug:
@@ -354,7 +370,7 @@ def fitFMRLockInFixedModField(H, dPdHoffset, guess, debug=False, guessplt=1, sep
         print fitarg
 
     fitY = LorentzianNLockInWrapper(H, np.append(fitarg,rms))
-    
+
     plt.plot(H,fitY,linewidth=3.0,label='final fit')
     residual = dPdHoffset-fitY
     plt.plot(H,residual+(np.min(fitY)-np.max(residual))*1.5,'.-k')
