@@ -298,7 +298,7 @@ def quadBG(x, a, b, c):
 def quartBG(x,a,b,c,d,e):
     return a*x**4 + b*x**3 + c*x**2 + d*x + e
 
-def subtractBG(H, dPdH, window=6, BGfunc=linearBG, returnFit=False):
+def subtractBG(H, dPdH, window=6, BGfunc=linearBG, returnFit=False, guess=None):
     #need to fix this to work with negative H
     guessmag, guessres, guesswidth = guesses(H,dPdH)
     bgH = []
@@ -322,7 +322,8 @@ def subtractBG(H, dPdH, window=6, BGfunc=linearBG, returnFit=False):
 
     if len(bg) > 1:
         if BGfunc == linearBG:
-            guess = np.array([0., 0.])
+            if guess is None:
+                guess = np.array([0., 0.])
         elif BGfunc == quadBG:
             guess = np.array([0.,0.,0.])
         elif BGfunc == quartBG:
