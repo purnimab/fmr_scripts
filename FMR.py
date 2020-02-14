@@ -300,11 +300,17 @@ def quartBG(x,a,b,c,d,e):
 
 def subtractBG(H, dPdH, window=6, BGfunc=linearBG, returnFit=False, guess=None):
     #need to fix this to work with negative H
-    guessmag, guessres, guesswidth = guesses(H,dPdH)
+    if np.size(window) == 1:
+        guessmag, guessres, guesswidth = guesses(H,dPdH)
+        Hupper = guessres+guesswidth*window
+        Hlower = guessres-guesswidth*window
+    elif np.size(window) == 2:
+        Hlower = window[0]
+        Hupper = window[1]
     bgH = []
     bg = []
 
-    upperbound = np.where(H>guessres+guesswidth*window)[0]
+    upperbound = np.where(H>Hupper)[0]
     if len(upperbound) > 0:
         bgend = upperbound[-1]
         bgH.extend(H[0:bgend])
@@ -312,7 +318,7 @@ def subtractBG(H, dPdH, window=6, BGfunc=linearBG, returnFit=False, guess=None):
     else:
         bgend = 0
 
-    lowerbound = np.where(H<guessres-guesswidth*window)[0]
+    lowerbound = np.where(H<Hlower)[0]
     if len(lowerbound) > 0:
         bgstart = lowerbound[0]
         bgH.extend(H[bgstart:])
@@ -361,7 +367,7 @@ def fitFMRLockInFixedModField(H, dPdHoffset, guess, debug=False, guessplt=1, sep
         plt.show()
         plt.plot(H,dPdHoffset,'.',label='data')
         start = timer()
-    fit = curve_fit(lambda x,*guessli: LorentzianNLockInWrapper(x,np.append(guessli,rms)), H, dPdHoffset, guessli)#, method='trf', verbose=2)
+    fit = curve_fit(lambda x,*guessli: LorentzianNLockInWrapper(x,np.append(guessli,rms)), H, dPdHoffset, guessli)#, absolute_sigma=True)#, method='trf', verbose=2)
     if debug:
         end = timer()
         print str(end-start)+' seconds for fit'
@@ -432,7 +438,7 @@ def fitFMRLockIn(H, dPdHoffset, guess, debug=False, guessplt=1, rmsguess=3., sep
         plt.legend()
         plt.show()
         start = timer()
-    fit = curve_fit(lambda x,*guessli: LorentzianNLockInWrapper(x,guessli), H, dPdHoffset, guessli)#, method='trf', verbose=2)
+    fit = curve_fit(lambda x,*guessli: LorentzianNLockInWrapper(x,guessli), H, dPdHoffset, guessli)#, absolute_sigma=True)#, method='trf', verbose=2)
     if debug:
         end = timer()
         print str(end-start)+' seconds for fit'
@@ -493,10 +499,10 @@ def fitFMR(H, dPdHoffset, guess, debug=False, guessplt=1, fixedphase=False, posd
             guessli[widthslice] = np.sqrt(np.abs(quickfit[0][widthslice]*prelimfit[0][widthslice]))
             #magslice = slice(0,-2,3)
             #guessli[magslice] *= 100.
-            fit = curve_fit(lambda x,*guess: LorentzianNLockInWrapper(x,np.append(insertphase(guess[:-1]),guess[-1])), H, dPdHoffset, guessli, bounds = (lower, upper))
+            fit = curve_fit(lambda x,*guess: LorentzianNLockInWrapper(x,np.append(insertphase(guess[:-1]),guess[-1])), H, dPdHoffset, guessli, bounds = (lower, upper))#, absolute_sigma=True)
             fitarg = np.append(insertphase(fit[0][:-1]),fit[0][-1]) #[1,2,4,1,2,4,3,5] -> [1,2,3,4,1,2,3,4,5]
         else:
-            fit = curve_fit(lambda x,*guessfix: LorentzianDerivativeNWrapper(x, insertphase(guessfix)), H, dPdHoffset, guessfix, bounds = (lower, upper))
+            fit = curve_fit(lambda x,*guessfix: LorentzianDerivativeNWrapper(x, insertphase(guessfix)), H, dPdHoffset, guessfix, bounds = (lower, upper))#, absolute_sigma=True)
             fitarg = insertphase(fit[0])
 
     else:
@@ -524,9 +530,9 @@ def fitFMR(H, dPdHoffset, guess, debug=False, guessplt=1, fixedphase=False, posd
             if debug:
                 print "Lock in guess:"
                 print guessli
-            fit = curve_fit(lambda x,*guessli: LorentzianNLockInWrapper(x,guessli), H, dPdHoffset, guessli, bounds = (lower, upper))
+            fit = curve_fit(lambda x,*guessli: LorentzianNLockInWrapper(x,guessli), H, dPdHoffset, guessli, bounds = (lower, upper))#, absolute_sigma=True)
         else:
-            fit = curve_fit(lambda x,*guess: LorentzianDerivativeNWrapper(x,guess), H, dPdHoffset, guess, bounds = (lower, upper))
+            fit = curve_fit(lambda x,*guess: LorentzianDerivativeNWrapper(x,guess), H, dPdHoffset, guess, bounds = (lower, upper))#, absolute_sigma=True)
 
         fitarg = fit[0]
         if debug:

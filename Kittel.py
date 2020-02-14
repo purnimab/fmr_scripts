@@ -16,7 +16,7 @@ def OOPresfield(HFMR, g, Meff, **kwargs):
         print kwargs
 
     gmuBmu0h = g*muBmu0h
-    off = 4*np.pi*Meff*gmuBmu0h
+    off = -4*np.pi*Meff*gmuBmu0h
     return OOPresfield2(HFMR, [gmuBmu0h, off])
 
 def OOPresfield2(HFMR,params):
@@ -166,7 +166,7 @@ def linewidth(f, n, orientation, deltaH0, alpha, g, Ms, *args):
         if ip != len(angles):
             raise IndexError('Number of IP datasets does not match fit parameters')
         G = args[-1]
-    else:
+    elif ip != 0:
         angles = args[:-2]
         if ip != len(angles):
             raise IndexError('Number of IP datasets does not match fit parameters')
@@ -263,6 +263,9 @@ def fitAll(f, HFMR, deltaH, n, direction, *args):
     ip = np.sum(orientation)
     if ip > 0:
         angs = args[0]
+    else:
+        angs = []
+
     if ip != len(angs):
         raise IndexError('IP parameters incompatible')
     if ip > 0:
@@ -307,13 +310,14 @@ def fitAll(f, HFMR, deltaH, n, direction, *args):
         Meff = HFMRfit[0][2]
 
         angles = calcAngs(angTypes,angs,HFMRfit[0][3:])
+
         results.update({'Hcubic':Hcub, 'angles':angles})
     results.update({'g':g, 'Meff':Meff})
 
     #2. fit linewidth with fixed g, angles from above
     if ip == 0:
         deltaHguess = [10.,.001]
-        deltaHfit = curve_fit(lambda f,*guess: linewidth(f,n,orientation,*np.concatenate([guess,[g,Ms]])), f, deltaH, deltaHguess)
+        deltaHfit = curve_fit(lambda f,*guess: linewidth(f,n,orientation,*np.concatenate([guess,[g,Meff]])), f, deltaH, deltaHguess)
         deltaH0 = deltaHfit[0][0]
         alpha = deltaHfit[0][1]
     elif ip == 1:
@@ -338,6 +342,130 @@ def fitAll(f, HFMR, deltaH, n, direction, *args):
     print deltaHfit
 
     return results #only contains fitted parameters
+    #return (g, Hcub, angles, Meff, deltaH0, alpha, Ms, G)
+
+def fitAllWithErrors(f, HFMR, deltaH, errHFMR, errdeltaH, n, direction, *args):
+    #f,HFMR,deltaH are concatenated lists
+    #n are the sequences
+    #direction is list of:
+    #   2 if IP mounted on rotator (angle relative to one another, can vary slightly
+    #   1 if IP measurement (fixed angles since they can't be determined properly) - overfitting
+    #   0 if OOP measurement
+    #args are the guesstimates of the angle (from rotator, or 110 = 45deg)
+    if len(set([len(f), len(HFMR), len(deltaH), len(errHFMR), len(errdeltaH), np.sum(n)])) != 1: #check if all are equal
+        raise IndexError('Length of datasets, input split, incompatible')
+    if len(n) != len(direction):
+        raise IndexError('Input split incompatible')
+    orientation = [i != 0 for i in direction] #True if IP, False if OOP
+    ip = np.sum(orientation)
+    if ip > 0:
+        angs = args[0]
+    else:
+        angs = []
+
+    if ip != len(angs):
+        raise IndexError('IP parameters incompatible')
+    if ip > 0:
+        angTypes = np.array(direction)[np.where(orientation)[0]]
+        approx = [i == 1 for i in angTypes]
+        relative = [i == 2 for i in angTypes]
+
+    results = {}
+    errors = {}
+
+    #1. fit resonance field TODO: figure out how to incorporate errors in x (HFMR) into this fitting - but these are much lower so maybe not an issue
+    if ip == 0:
+        HFMRguess = [2.,320.]
+        Hcub = np.nan
+        HFMRfit = curve_fit(lambda HFMR,*guess: resfield(HFMR,n,orientation,*np.insert(guess,1,Hcub)), HFMR, f, HFMRguess, absolute_sigma=True)
+        g = HFMRfit[0][0]
+        gerr = HFMRfit[1][0][0]
+        Meff = HFMRfit[0][1]
+        Mefferr = HFMRfit[1][1][1]
+        angles = np.nan
+    elif ip < 3: #if there are only 2 angles, that is hard to fit so they must be fixed
+        HFMRguess = [2.,-40.,320.]
+        angles = angs
+        HFMRfit = curve_fit(lambda HFMR,*guess: resfield(HFMR,n,orientation,*np.concatenate([guess,angles])), HFMR, f, HFMRguess, absolute_sigma=True)
+        g = HFMRfit[0][0]
+        gerr = HFMRfit[1][0][0]
+        Hcub = HFMRfit[0][1]
+        Hcuberr = HFMRfit[1][1][1]
+        Meff = HFMRfit[0][2]
+        Mefferr = HFMRfit[1][2][2]
+        results.update({'Hcubic':Hcub})
+        errors.update({'errHcubic':Hcuberr})
+    else:
+        HFMRguessNoAng = [2.,-40.,320.]
+        angGuess = []
+        if np.sum(approx) > 0:
+            angGuess = np.concatenate([angGuess,np.array(angs)[np.where(approx)[0]]])
+        if np.sum(relative) > 0:
+            angGuess = np.append(angGuess,0.)
+        print 'free angles:'
+        print len(angGuess)
+        print angGuess
+        print angGuess+np.pi/8
+        HFMRguess = np.concatenate([HFMRguessNoAng,angGuess])
+        #bounds = (np.concatenate(([-np.inf]*len(HFMRguessNoAng),np.array(angGuess)-np.deg2rad(5.))),np.concatenate(([np.inf]*len(HFMRguessNoAng),np.array(angGuess)+np.deg2rad(5.))))
+        HFMRfit = curve_fit(lambda HFMR,*guess: resfield(HFMR,n,orientation,*np.concatenate([guess[:3],calcAngs(angTypes,angs,guess[3:])])), HFMR, f, HFMRguess, absolute_sigma=True)#, bounds=bounds)
+        g = HFMRfit[0][0]
+        gerr = HFMRfit[1][0][0]
+        Hcub = HFMRfit[0][1]
+        Hcuberr = HFMRfit[1][1][1]
+        Meff = HFMRfit[0][2]
+        Mefferr = HFMRfit[1][2][2]
+
+        angles = calcAngs(angTypes,angs,HFMRfit[0][3:])
+        angleserr = calcAngs(angTypes,np.array([0]*len(angTypes)),np.diag(HFMRfit[1])[3:])
+
+        results.update({'Hcubic':Hcub, 'angles':angles})
+        errors.update({'errHcubic':Hcuberr, 'errangles':angleserr})
+    results.update({'g':g, 'Meff':Meff})
+    errors.update({'errg':gerr, 'errMeff':Mefferr})
+
+    #2. fit linewidth with fixed g, angles from above
+    if ip == 0:
+        deltaHguess = [10.,.001]
+        deltaHfit = curve_fit(lambda f,*guess: linewidth(f,n,orientation,*np.concatenate([guess,[g,Meff]])), f, deltaH, deltaHguess, sigma=errdeltaH, absolute_sigma=True)
+        deltaH0 = deltaHfit[0][0]
+        deltaH0err = deltaHfit[1][0][0]
+        alpha = deltaHfit[0][1]
+        alphaerr = deltaHfit[1][1][1]
+    elif ip == 1:
+        deltaHguess = [10.,.001,320.,200.]
+        deltaHfit = curve_fit(lambda f,*guess: linewidth(f,n,orientation,*np.insert(np.insert(guess,2,g),-1,angles)), f, deltaH, deltaHguess, sigma=errdeltaH, absolute_sigma=True)
+        deltaH0 = deltaHfit[0][0]
+        deltaH0err = deltaHfit[1][0][0]
+        alpha = deltaHfit[0][1]
+        alphaerr = deltaHfit[1][1][1]
+        Ms = deltaHfit[0][2]
+        Mserr = deltaHfit[1][2][2]
+        G = deltaHfit[0][3]
+        Gerr = deltaHfit[1][3][3]
+        results.update({'Ms':Ms, 'G':G})
+        errors.update({'errMs':Mserr, 'errG':Gerr})
+    else:
+        deltaHguess = [10.,.001,320.,200.,400.]
+        deltaHfit = curve_fit(lambda f,*guess: linewidth(f,n,orientation,*np.insert(np.insert(guess,2,g),-2,angles)), f, deltaH, deltaHguess, sigma=errdeltaH, absolute_sigma=True)
+        deltaH0 = deltaHfit[0][0]
+        deltaH0err = deltaHfit[1][0][0]
+        alpha = deltaHfit[0][1]
+        alphaerr = deltaHfit[1][1][1]
+        Ms = deltaHfit[0][2]
+        Mserr = deltaHfit[1][2][2]
+        G100 = deltaHfit[0][3]
+        G100err = deltaHfit[1][3][3]
+        G110 = deltaHfit[0][4]
+        G110err = deltaHfit[1][4][4]
+        results.update({'Ms':Ms, 'G100':G100, 'G110':G110})
+        errors.update({'errMs':Mserr, 'errG100':G100err, 'errG110':G110err})
+    results.update({'deltaH0':deltaH0, 'alpha':alpha})
+    errors.update({'errdeltaH0':deltaH0err, 'erralpha':alphaerr})
+    print HFMRfit
+    print deltaHfit
+
+    return results,errors #only contains fitted parameters
     #return (g, Hcub, angles, Meff, deltaH0, alpha, Ms, G)
 
 def fitSimul(x, y, n, direction, *args): #TODO: actually finish this
