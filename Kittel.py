@@ -22,13 +22,13 @@ def OOPresfield(HFMR, g, Meff, **kwargs):
 def OOPresfield2(HFMR,params):
     return np.poly1d(params)(HFMR)
 
-def OOPlinewidth(f, deltaH0, alpha, g, **kwargs):
+def OOPlinewidth(f, deltaH0op, alpha, g, **kwargs):
     if len(kwargs) > 0:
         print 'Unneccesary variables:'
         print kwargs
 
     gmuBmu0h = g*muBmu0h
-    return OOPlinewidth2(f,[alpha/gmuBmu0h, deltaH0])
+    return OOPlinewidth2(f,[alpha/gmuBmu0h, deltaH0op])
 
 def OOPlinewidth2(f,params):
     return np.poly1d(params)(f)
@@ -124,15 +124,15 @@ def resfield(HFMR, n, orientation, g, Hcubic, Meff, *args):
             y = np.append(y,OOPresfield(x,g,Meff))
     return y
 
-def IPlinewidth(f, deltaH0, alpha, g, angle, Ms, G100, G110, **kwargs):
+def IPlinewidth(f, deltaH0ip, alpha, g, angle, Ms, G100, G110, **kwargs):
     if len(kwargs) > 0:
         print 'Unneccesary variables:'
         print kwargs
 
     G = G100*np.cos(2.*angle)**2 + G110*np.cos(2.*(angle-np.pi/4.))**2
-    return IPlinewidth1dir(f, deltaH0, alpha, g, Ms, G)
+    return IPlinewidth1dir(f, deltaH0ip, alpha, g, Ms, G)
 
-def IPlinewidth1dir(f, deltaH0, alpha, g, Ms, G, **kwargs):
+def IPlinewidth1dir(f, deltaH0ip, alpha, g, Ms, G, **kwargs):
     if len(kwargs) > 0:
         print 'Unneccesary variables:'
         print kwargs
@@ -141,7 +141,7 @@ def IPlinewidth1dir(f, deltaH0, alpha, g, Ms, G, **kwargs):
     fm = gmuBmu0h*4.*np.pi*Ms
     sqrt = np.sqrt(f**2+(fm/2.)**2)
     mag = np.arcsin(np.sqrt((sqrt-fm/2.)/(sqrt+fm/2.)))
-    return deltaH0 + alpha/gmuBmu0h*f + G*mag
+    return deltaH0ip + alpha/gmuBmu0h*f + G*mag
 
 def IPlinewidth2dir(f, n1, n2, deltaH0, alpha, g, angle1, angle2, Ms, G100, G110, **kwargs):
     if len(f) != n1 + n2:
@@ -153,7 +153,7 @@ def IPlinewidth2dir(f, n1, n2, deltaH0, alpha, g, angle1, angle2, Ms, G100, G110
     y2 = IPlinewidth(x2,deltaH0,alpha,g,angle2,Ms,G100,G110)
     return np.concatenate([y1,y2])
 
-def linewidth(f, n, orientation, deltaH0, alpha, g, Ms, *args):
+def linewidth(f, n, orientation, deltaH0op, deltaH0ip, alpha, g, Ms, *args):
     #f is a concatenated list
     #n are the sequences
     #orientation are booleans, True if IP, False if OOP
@@ -182,11 +182,11 @@ def linewidth(f, n, orientation, deltaH0, alpha, g, Ms, *args):
             angle = angles[j]
             j += 1
             if ip == 1:
-                y = np.append(y,IPlinewidth1dir(x,deltaH0,alpha,g,Ms,G))
+                y = np.append(y,IPlinewidth1dir(x,deltaH0ip,alpha,g,Ms,G))
             else:
-                y = np.append(y,IPlinewidth(x,deltaH0,alpha,g,angle,Ms,G100,G110))
+                y = np.append(y,IPlinewidth(x,deltaH0ip,alpha,g,angle,Ms,G100,G110))
         else:
-            y = np.append(y,OOPlinewidth(x,deltaH0,alpha,g))
+            y = np.append(y,OOPlinewidth(x,deltaH0op,alpha,g))
 
     return y
 
@@ -316,28 +316,31 @@ def fitAll(f, HFMR, deltaH, n, direction, *args):
 
     #2. fit linewidth with fixed g, angles from above
     if ip == 0:
-        deltaHguess = [10.,.001]
+        deltaHguess = [10.,10.,.001]
         deltaHfit = curve_fit(lambda f,*guess: linewidth(f,n,orientation,*np.concatenate([guess,[g,Meff]])), f, deltaH, deltaHguess)
-        deltaH0 = deltaHfit[0][0]
-        alpha = deltaHfit[0][1]
+        deltaH0op = deltaHfit[0][0]
+        deltaH0ip = deltaHfit[0][1]
+        alpha = deltaHfit[0][2]
     elif ip == 1:
-        deltaHguess = [10.,.001,320.,200.]
-        deltaHfit = curve_fit(lambda f,*guess: linewidth(f,n,orientation,*np.insert(np.insert(guess,2,g),-1,angles)), f, deltaH, deltaHguess)
-        deltaH0 = deltaHfit[0][0]
-        alpha = deltaHfit[0][1]
-        Ms = deltaHfit[0][2]
-        G = deltaHfit[0][3]
+        deltaHguess = [10.,10.,.001,320.,200.]
+        deltaHfit = curve_fit(lambda f,*guess: linewidth(f,n,orientation,*np.insert(np.insert(guess,3,g),-1,angles)), f, deltaH, deltaHguess)
+        deltaH0op = deltaHfit[0][0]
+        deltaH0ip = deltaHfit[0][1]
+        alpha = deltaHfit[0][2]
+        Ms = deltaHfit[0][3]
+        G = deltaHfit[0][4]
         results.update({'Ms':Ms, 'G':G})
     else:
-        deltaHguess = [10.,.001,320.,200.,400.]
-        deltaHfit = curve_fit(lambda f,*guess: linewidth(f,n,orientation,*np.insert(np.insert(guess,2,g),-2,angles)), f, deltaH, deltaHguess)
-        deltaH0 = deltaHfit[0][0]
-        alpha = deltaHfit[0][1]
-        Ms = deltaHfit[0][2]
-        G100 = deltaHfit[0][3]
-        G110 = deltaHfit[0][4]
+        deltaHguess = [10.,10.,.001,320.,200.,400.]
+        deltaHfit = curve_fit(lambda f,*guess: linewidth(f,n,orientation,*np.insert(np.insert(guess,3,g),-2,angles)), f, deltaH, deltaHguess)
+        deltaH0op = deltaHfit[0][0]
+        deltaH0ip = deltaHfit[0][1]
+        alpha = deltaHfit[0][2]
+        Ms = deltaHfit[0][3]
+        G100 = deltaHfit[0][4]
+        G110 = deltaHfit[0][5]
         results.update({'Ms':Ms, 'G100':G100, 'G110':G110})
-    results.update({'deltaH0':deltaH0, 'alpha':alpha})
+    results.update({'deltaH0op':deltaH0op, 'deltaH0ip':deltaH0ip, 'alpha':alpha})
     print HFMRfit
     print deltaHfit
 
